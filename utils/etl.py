@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -11,11 +11,17 @@ from utils.cleaning import (
     )
 from utils.date_time import parse_time_to_timedelta
 from utils.io import load_transactions
+from utils.llm_enrichment import enrich_transactions_with_llm
 from utils.sheet import normalize_columns, detect_columns
 
 # ---------- ETL ----------
 # noinspection PyTypeChecker
-def load_and_prepare(path: Path) -> pd.DataFrame:
+def load_and_prepare(
+    path: Path,
+    *,
+    llm_client: Optional[object] = None,
+    llm_batch_size: int = 20,
+) -> pd.DataFrame:
     df = load_transactions(path)
     df = normalize_columns(df)
     
@@ -186,6 +192,12 @@ def load_and_prepare(path: Path) -> pd.DataFrame:
     
     # Cleaned description (from coalesced raw_desc)
     df["cleaned_desc"] = df["raw_desc"].apply(clean_description)
+
+    if llm_client is not None:
+        enriched = enrich_transactions_with_llm(
+            df, llm_client, batch_size=llm_batch_size
+        )
+        df = df.join(enriched)
     
     # TRNTYPE normalization/inference
     trntype_source = (
