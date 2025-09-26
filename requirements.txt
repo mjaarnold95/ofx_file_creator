@@ -1,0 +1,9 @@
+pandas
+numpy
+uuid
+openpyxl
+spacy
+dateparser
+rapidfuzz
+spacy-langdetect
+python-dateutil
