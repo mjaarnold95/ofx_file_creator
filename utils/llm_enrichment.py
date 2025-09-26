@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
+from typing import List, Sequence
 
 import pandas as pd
 
@@ -36,7 +37,6 @@ class _ClientInvoker:
         mlx_result = _try_mlx_lm_invocation(self.client, prompts)
         if mlx_result is not None:
             return mlx_result
-
         if hasattr(self.client, "generate_batch"):
             return list(self.client.generate_batch(list(prompts)))
 
@@ -177,7 +177,6 @@ def enrich_transactions_with_llm(
             "description_llm": description_series,
         }
     )
-
 
 def _try_mlx_lm_invocation(client: object, prompts: Sequence[str]) -> Optional[List[str]]:
     """Attempt to route prompts through an ``mlx-lm`` client configuration."""
