@@ -156,6 +156,25 @@ def test_build_ofx_uses_transaction_date_range():
     assert "<FITID>ABC123</FITID>" in ofx_text
 
 
+def test_build_ofx_prefers_llm_enriched_fields():
+    df = pd.DataFrame(
+        {
+            "date_parsed": [pd.Timestamp("2024-05-01", tz="UTC")],
+            "amount_clean": [-4.75],
+            "trntype_norm": ["DEBIT"],
+            "cleaned_desc": ["Coffee Shop"],
+            "payee_display": ["Coffee Shop"],
+            "payee_llm": ["Daily Grind Coffee"],
+            "description_llm": ["Coffee purchase"],
+        }
+    )
+
+    ofx_text = build_ofx(df, accttype="checking", acctid="12345")
+
+    assert "<NAME>DAILY GRIND COFFEE</NAME>" in ofx_text
+    assert "<MEMO>COFFEE PURCHASE (_DEBIT_)</MEMO>" in ofx_text
+
+
 def test_build_ofx_defaults_missing_dtposted(df_without_dates):
     ofx_text = build_ofx(df_without_dates, accttype="checking", acctid="12345")
     dtposted_match = re.search(r"<DTPOSTED>([^<]+)</DTPOSTED>", ofx_text)
