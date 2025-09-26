@@ -106,15 +106,40 @@ def build_ofx(
             ]
         fitid_series.loc[missing_fitid] = generated
     
-    name_candidates = []
-    for col in ("payee_display", "posting_memo", "cleaned_desc", "raw_desc"):
-        if col in df_txn.columns:
-            name_candidates.append(df_txn[col].astype("string"))
-    if name_candidates:
-        stacked = pd.concat(name_candidates, axis=1)
-        raw_name = stacked.bfill(axis=1).iloc[:, 0].fillna("")
-    else:
-        raw_name = pd.Series("", index=df_txn.index, dtype="string")
+    def _coalesce_columns(columns: tuple[str, ...]) -> pd.Series:
+        """Return the first non-null value across the provided columns."""
+
+        selected = [
+            df_txn[col].astype("string")
+            for col in columns
+            if col in df_txn.columns
+        ]
+        if not selected:
+            return pd.Series("", index=df_txn.index, dtype="string")
+
+        stacked = pd.concat(selected, axis=1)
+        return stacked.bfill(axis=1).iloc[:, 0].fillna("")
+
+    raw_name = _coalesce_columns(
+        (
+            "payee_llm",
+            "payee_display",
+            "posting_memo",
+            "cleaned_desc",
+            "raw_desc",
+        )
+    )
+
+    raw_memo = _coalesce_columns(
+        (
+            "description_llm",
+            "posting_memo",
+            "cleaned_desc",
+            "raw_desc",
+            "payee_llm",
+            "payee_display",
+        )
+    )
     
     def _escape_series(series: pd.Series) -> pd.Series:
         """Normalise OFX string fields while preserving XML entities."""
@@ -133,9 +158,8 @@ def build_ofx(
             .str.replace(">", "&gt;")
         )
     
-    escaped = _escape_series(raw_name)
-    name_series = escaped.str.slice(0, 32)
-    memo_series = escaped
+    name_series = _escape_series(raw_name).str.slice(0, 32)
+    memo_series = _escape_series(raw_memo)
     
     fallback_dtposted = ofx_datetime(fallback_timestamp) or dtend or ofx_datetime(now)
     if "date_parsed" in df_txn.columns:
