@@ -6,7 +6,6 @@ import logging
 from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
-from typing import List, Sequence
 
 import pandas as pd
 
@@ -203,17 +202,18 @@ def _try_mlx_lm_invocation(client: object, prompts: Sequence[str]) -> Optional[L
     tokenize_kwargs = config.get("tokenize_kwargs", {})
     generation_kwargs = dict(config.get("generation_kwargs", {}))
     max_tokens = generation_kwargs.pop("max_tokens", None)
+    sampling_params = config.get("sampling_params")
+    if sampling_params is not None:
+        generation_kwargs.setdefault("sampling_params", sampling_params)
 
     if batch_fn is not None and config.get("use_batch", True):
-        tokens = [
-            _tokenize_for_mlx(tokenizer, prompt, tokenize_kwargs)
-            for prompt in prompts
-        ]
         batch_kwargs = dict(generation_kwargs)
         if max_tokens is not None:
             batch_kwargs.setdefault("max_tokens", max_tokens)
-        responses = batch_fn(model, tokenizer, tokens, **batch_kwargs)
-        texts = getattr(responses, "texts", responses)
+        if tokenize_kwargs:
+            batch_kwargs.setdefault("tokenize_kwargs", tokenize_kwargs)
+        responses = batch_fn(model, tokenizer, prompts, **batch_kwargs)
+        texts = _extract_mlx_batch_texts(responses)
         return [str(text) for text in texts]
 
     if generate_fn is None:
@@ -224,11 +224,13 @@ def _try_mlx_lm_invocation(client: object, prompts: Sequence[str]) -> Optional[L
     single_kwargs = dict(generation_kwargs)
     if max_tokens is not None:
         single_kwargs.setdefault("max_tokens", max_tokens)
+    if tokenize_kwargs:
+        single_kwargs.setdefault("tokenize_kwargs", tokenize_kwargs)
 
-    outputs = [
-        str(generate_fn(model, tokenizer, prompt=prompt, **single_kwargs))
-        for prompt in prompts
-    ]
+    outputs = []
+    for prompt in prompts:
+        response = generate_fn(model, tokenizer, prompt=prompt, **single_kwargs)
+        outputs.append(_extract_mlx_single_text(response))
     return outputs
 
 
@@ -283,29 +285,80 @@ def _resolve_mlx_client_config(client: object) -> Optional[Dict[str, Any]]:
         config["generate"] = data["generate"]
     if "tokenize_kwargs" in data:
         config["tokenize_kwargs"] = dict(data["tokenize_kwargs"])
+    if "sampling_params" in data:
+        config["sampling_params"] = data["sampling_params"]
 
     return config
 
+def _extract_mlx_batch_texts(responses: Any) -> List[str]:
+    """Normalize batch generation outputs into a list of strings."""
 
-def _tokenize_for_mlx(
-    tokenizer: Any, prompt: str, tokenize_kwargs: Optional[Dict[str, Any]] = None
-) -> List[int]:
-    """Convert a prompt string into token IDs expected by ``mlx_lm``."""
-
-    tokenize_kwargs = tokenize_kwargs or {}
-    encoded = tokenizer(prompt, **tokenize_kwargs)
-
-    if hasattr(encoded, "input_ids"):
-        tokens = encoded.input_ids
-    elif isinstance(encoded, Mapping) and "input_ids" in encoded:
-        tokens = encoded["input_ids"]
+    texts = None
+    if hasattr(responses, "texts"):
+        texts = responses.texts
+    elif isinstance(responses, Mapping) and "texts" in responses:
+        texts = responses["texts"]
     else:
-        tokens = encoded
+        texts = responses
 
-    if hasattr(tokens, "tolist"):
-        tokens = tokens.tolist()
+    if hasattr(texts, "tolist"):
+        texts = texts.tolist()
 
-    if tokens and isinstance(tokens[0], (list, tuple)):
-        tokens = tokens[0]
+    if isinstance(texts, Mapping):
+        if "text" in texts:
+            texts = texts["text"]
+        elif "completions" in texts:
+            texts = texts["completions"]
 
-    return [int(t) for t in tokens]
+    if isinstance(texts, str):
+        return [texts]
+
+    if isinstance(texts, Sequence):
+        return [str(item) for item in texts]
+
+    return [str(texts)]
+
+
+def _extract_mlx_single_text(response: Any) -> str:
+    """Normalize a single generation output into a string."""
+
+    if isinstance(response, str):
+        return response
+
+    if hasattr(response, "text"):
+        return str(response.text)
+
+    if hasattr(response, "generated_text"):
+        return str(response.generated_text)
+
+    if hasattr(response, "completion"):
+        return str(response.completion)
+
+    if isinstance(response, Mapping):
+        for key in ("text", "generated_text", "completion"):
+            if key in response:
+                value = response[key]
+                if isinstance(value, Sequence) and not isinstance(value, str):
+                    if value:
+                        return str(value[0])
+                return str(value)
+        if "choices" in response and response["choices"]:
+            choice = response["choices"][0]
+            if isinstance(choice, Mapping):
+                if "text" in choice:
+                    return str(choice["text"])
+                if "message" in choice and isinstance(choice["message"], Mapping):
+                    content = choice["message"].get("content")
+                    if content is not None:
+                        return str(content)
+
+    if isinstance(response, Sequence) and not isinstance(response, str):
+        first = response[0]
+        if isinstance(first, Mapping):
+            if "text" in first:
+                return str(first["text"])
+            if "generated_text" in first:
+                return str(first["generated_text"])
+        return str(first)
+
+    return str(response)

@@ -47,13 +47,20 @@ from mlx_lm import load as mlx_load
 model, tokenizer = mlx_load("mlx-community/Llama-3.2-3B-Instruct-4bit")
 
 client = {
-    "framework": "mlx_lm",
+    "framework": "mlx_lm",  # tells the helper to use the mlx integration
     "model": model,
     "tokenizer": tokenizer,
-    "generation_kwargs": {"max_tokens": 128},
+    "generation_kwargs": {"max_tokens": 128},  # forwarded to mlx_lm.generate
 }
 
 prepared = load_and_prepare(path_to_csv, llm_client=client, llm_batch_size=10)
+```
+
+Set `use_batch=False` in the configuration if you prefer to call `mlx_lm.generate`
+per prompt instead of batching through `mlx_lm.batch_generate`. Remember that mlx-lm
+requires the base [`mlx`](https://pypi.org/project/mlx/) package, which is only
+available on recent macOS releases.
+
 ### Offline or air-gapped usage
 
 Leave `llm_client=None` (the default) to skip enrichment entirely. The OFX generation

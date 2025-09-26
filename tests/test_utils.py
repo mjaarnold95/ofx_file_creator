@@ -308,13 +308,6 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     class FakeTokenizer:
         eos_token_ids = [0]
 
-        def __call__(self, prompt, **kwargs):
-            tokens = [ord(ch) for ch in prompt]
-            return types.SimpleNamespace(input_ids=[tokens])
-
-        def decode(self, tokens):
-            return "".join(chr(i) for i in tokens)
-
     fake_tokenizer = FakeTokenizer()
 
     def response_for_prompt(text):
@@ -338,7 +331,7 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
 
     def fake_batch_generate(model, tokenizer, prompts, **kwargs):
         fake_module.calls.append(("batch", prompts, kwargs))
-        texts = [response_for_prompt(tokenizer.decode(p)) for p in prompts]
+        texts = [response_for_prompt(p) for p in prompts]
         return types.SimpleNamespace(texts=texts)
 
     def fake_generate(model, tokenizer, prompt, **kwargs):
