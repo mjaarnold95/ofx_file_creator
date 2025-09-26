@@ -184,6 +184,18 @@ def test_build_ofx_uses_fallback_timestamp_for_ranges():
     assert f"<DTSTART>{fallback_str}</DTSTART>" in ofx_text
     assert f"<DTEND>{fallback_str}</DTEND>" in ofx_text
 
+
+def test_build_ofx_requires_amount_column():
+    df = pd.DataFrame(
+        {
+            "date_parsed": [pd.Timestamp("2024-01-01", tz="UTC")],
+        }
+    )
+
+    with pytest.raises(ValueError, match="amount_clean"):
+        build_ofx(df, accttype="checking", acctid="12345")
+
+
 def test_infer_trntype_series_uses_custom_rules(tmp_path):
     config_path = tmp_path / "rules.json"
     config_path.write_text(
