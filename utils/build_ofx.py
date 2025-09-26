@@ -117,13 +117,20 @@ def build_ofx(
         raw_name = pd.Series("", index=df_txn.index, dtype="string")
     
     def _escape_series(series: pd.Series) -> pd.Series:
+        """Normalise OFX string fields while preserving XML entities."""
+
+        normalised = (
+            series.astype("string")
+            .fillna("")
+            .str.replace(r"\r?\n", " ", regex=True)
+            .str.strip()
+            .str.upper()
+        )
+
         return (
-            series.astype(str)
-            .str.replace("&", "&amp;")
+            normalised.str.replace("&", "&amp;")
             .str.replace("<", "&lt;")
             .str.replace(">", "&gt;")
-            .str.replace("\n", "")
-            .str.strip()
         )
     
     escaped = _escape_series(raw_name)
@@ -174,9 +181,9 @@ def build_ofx(
         if checknum:
             xml.append(f"  <CHECKNUM>{checknum}</CHECKNUM>")
         if row.name:
-            xml.append(f"  <NAME>{row.name.upper()}</NAME>")
+            xml.append(f"  <NAME>{row.name}</NAME>")
         if row.memo:
-            xml.append(f"  <MEMO>{row.memo.upper()} (_{trntype}_)</MEMO>")
+            xml.append(f"  <MEMO>{row.memo} (_{trntype}_)</MEMO>")
         xml.append("</STMTTRN>")
         stmt_lines.append("\n".join(xml))
     
