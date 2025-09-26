@@ -17,6 +17,7 @@ from utils.validate import assert_ofx_ready
 
 from utils.rules import load_rules
 from utils.etl import load_and_prepare
+from utils.llm_enrichment import enrich_transactions_with_llm
 
 
 @pytest.fixture
@@ -237,5 +238,76 @@ def test_load_and_prepare_handles_csv(sample_transaction_csv):
 
     assert "date_parsed" in df.columns
     assert pd.Timestamp("2023-01-02", tz="UTC") == df.loc[0, "date_parsed"]
-    
+
+
+class FakeLLMClient:
+    def __init__(self):
+        self.calls = []
+
+    def generate_batch(self, prompts):
+        self.calls.append(list(prompts))
+        responses = []
+        for prompt in prompts:
+            if "Coffee" in prompt:
+                responses.append(
+                    json.dumps(
+                        {
+                            "payee": "Daily Grind Coffee",
+                            "category": "Food & Drink",
+                            "description": "Coffee purchase",
+                        }
+                    )
+                )
+            elif "Hardware" in prompt:
+                responses.append(
+                    "Here you go: {\"payee\": \"Ace Hardware\","
+                    " \"category\": \"Home Improvement\","
+                    " \"description\": \"Hardware run\"}"
+                )
+            else:
+                responses.append("No idea")
+        return responses
+
+
+def test_enrich_transactions_with_llm_batches_and_failures():
+    df = pd.DataFrame(
+        {
+            "raw_desc": ["Coffee Shop", "Weekend Hardware", "Unknown"],
+            "payee_display": ["Coffee Shop", "Hardware Store", "Mystery"],
+            "cleaned_desc": ["coffee", "hardware", ""],
+        }
+    )
+
+    client = FakeLLMClient()
+    enriched = enrich_transactions_with_llm(df, client, batch_size=2)
+
+    assert list(enriched.columns) == [
+        "payee_llm",
+        "category_llm",
+        "description_llm",
+    ]
+    assert enriched.loc[0, "payee_llm"] == "Daily Grind Coffee"
+    assert enriched.loc[1, "category_llm"] == "Home Improvement"
+    assert pd.isna(enriched.loc[2, "payee_llm"])
+    assert len(client.calls) == 2
+
+
+def test_load_and_prepare_enriches_when_llm_client_provided(tmp_path):
+    csv_path = tmp_path / "transactions.csv"
+    pd.DataFrame(
+        {
+            "Date": ["2023-05-01", "2023-05-02"],
+            "Amount": ["10.00", "25.00"],
+            "Description": ["Coffee Shop", "Weekend Hardware"],
+            "Payee": ["Coffee Shop", "Hardware Store"],
+        }
+    ).to_csv(csv_path, index=False)
+
+    client = FakeLLMClient()
+    df = load_and_prepare(csv_path, llm_client=client, llm_batch_size=1)
+
+    assert "payee_llm" in df.columns
+    assert df.loc[0, "payee_llm"] == "Daily Grind Coffee"
+    assert df.loc[0, "category_llm"] == "Food & Drink"
+    assert df.loc[1, "payee_llm"] == "Ace Hardware"
 
