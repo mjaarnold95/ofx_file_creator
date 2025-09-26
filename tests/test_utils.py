@@ -1,4 +1,5 @@
 import hashlib
+import json
 import re
 import sys
 from pathlib import Path
@@ -9,8 +10,11 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from utils.build_ofx import build_ofx
+from utils.cleaning import infer_trntype_series
 from utils.date_time import ofx_datetime, parse_time_to_timedelta
 from utils.id import make_fitid
+
+from utils.rules import load_rules
 from utils.etl import load_and_prepare
 
 
@@ -109,6 +113,39 @@ def test_build_ofx_defaults_missing_dtposted(df_without_dates):
     assert re.fullmatch(r"\d{14}\.\d{3}\[0:UTC\]", dtposted_value)
 
 
+def test_infer_trntype_series_uses_custom_rules(tmp_path):
+    config_path = tmp_path / "rules.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "source_aliases": {"XYZ": "PAYMENT"},
+                "keyword_rules": {
+                    "extend": [
+                        {
+                            "pattern": r"\bESPRESSO\b",
+                            "trntype": "CASH",
+                        }
+                    ]
+                },
+            }
+        )
+    )
+
+    custom_rules = load_rules(config_path)
+
+    amounts = pd.Series([10.0, -12.5])
+    trntype_text = pd.Series(["xyz", None])
+    cleaned_desc = pd.Series([None, "Morning espresso run"])
+
+    result = infer_trntype_series(
+        amounts,
+        trntype_text,
+        cleaned_desc,
+        rules=custom_rules,
+    )
+
+    assert list(result) == ["PAYMENT", "CASH"]
+    
 def test_load_and_prepare_handles_csv(sample_transaction_csv):
     df = load_and_prepare(sample_transaction_csv)
 
@@ -117,3 +154,4 @@ def test_load_and_prepare_handles_csv(sample_transaction_csv):
 
     assert "date_parsed" in df.columns
     assert pd.Timestamp("2023-01-02", tz="UTC") == df.loc[0, "date_parsed"]
+    
