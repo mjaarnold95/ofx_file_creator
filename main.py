@@ -5,7 +5,7 @@ Process Excel files containing bank transaction data, normalize and clean the da
 infer transaction types, and generate OFX files for financial software import.
 
 Usage:
-    pip3 install -r requirements.txt
+    pip3 install -r requirements.txt  # installs pandas, numpy, openpyxl, python-dateutil
     python main.py
 
 Edit the paths in the __main__ section to point to your checking and savings account Excel files.
