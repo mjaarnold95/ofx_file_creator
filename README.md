@@ -35,6 +35,25 @@ description. The model is asked to emit minified JSON with `payee`, `category`, 
   prompt template and size your batches accordingly. For exploratory runs, point the
   client at a lower-cost model or reduce the batch size.
 
+### Using mlx-lm locally
+
+Apple silicon users can rely on [`mlx-lm`](https://github.com/ml-explore/mlx-examples)
+for local inference. Load the model with `mlx_lm.utils.load` (or `mlx_lm.load`) and
+pass a configuration dictionary to `load_and_prepare`:
+
+```python
+from mlx_lm import load as mlx_load
+
+model, tokenizer = mlx_load("mlx-community/Llama-3.2-3B-Instruct-4bit")
+
+client = {
+    "framework": "mlx_lm",
+    "model": model,
+    "tokenizer": tokenizer,
+    "generation_kwargs": {"max_tokens": 128},
+}
+
+prepared = load_and_prepare(path_to_csv, llm_client=client, llm_batch_size=10)
 ### Offline or air-gapped usage
 
 Leave `llm_client=None` (the default) to skip enrichment entirely. The OFX generation

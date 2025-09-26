@@ -2,6 +2,7 @@ import hashlib
 import json
 import re
 import sys
+import types
 from pathlib import Path
 
 import pandas as pd
@@ -291,6 +292,85 @@ def test_enrich_transactions_with_llm_batches_and_failures():
     assert pd.isna(enriched.loc[2, "payee_llm"])
     assert len(client.calls) == 2
 
+
+def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
+    df = pd.DataFrame(
+        {
+            "raw_desc": ["Coffee Shop", "Weekend Hardware", "Unknown"],
+            "payee_display": ["Coffee Shop", "Hardware Store", "Mystery"],
+            "cleaned_desc": ["coffee", "hardware", ""],
+        }
+    )
+
+    fake_module = types.ModuleType("mlx_lm")
+    fake_module.calls = []
+
+    class FakeTokenizer:
+        eos_token_ids = [0]
+
+        def __call__(self, prompt, **kwargs):
+            tokens = [ord(ch) for ch in prompt]
+            return types.SimpleNamespace(input_ids=[tokens])
+
+        def decode(self, tokens):
+            return "".join(chr(i) for i in tokens)
+
+    fake_tokenizer = FakeTokenizer()
+
+    def response_for_prompt(text):
+        if "Coffee" in text:
+            return json.dumps(
+                {
+                    "payee": "Daily Grind Coffee",
+                    "category": "Food & Drink",
+                    "description": "Coffee purchase",
+                }
+            )
+        if "Hardware" in text:
+            return json.dumps(
+                {
+                    "payee": "Ace Hardware",
+                    "category": "Home Improvement",
+                    "description": "Hardware run",
+                }
+            )
+        return "No idea"
+
+    def fake_batch_generate(model, tokenizer, prompts, **kwargs):
+        fake_module.calls.append(("batch", prompts, kwargs))
+        texts = [response_for_prompt(tokenizer.decode(p)) for p in prompts]
+        return types.SimpleNamespace(texts=texts)
+
+    def fake_generate(model, tokenizer, prompt, **kwargs):
+        fake_module.calls.append(("single", prompt, kwargs))
+        return response_for_prompt(prompt)
+
+    fake_module.batch_generate = fake_batch_generate
+    fake_module.generate = fake_generate
+
+    monkeypatch.setitem(sys.modules, "mlx_lm", fake_module)
+
+    client = {
+        "model": object(),
+        "tokenizer": fake_tokenizer,
+        "framework": "mlx_lm",
+        "generation_kwargs": {"max_tokens": 64},
+    }
+
+    enriched_batch = enrich_transactions_with_llm(df, client, batch_size=3)
+
+    assert enriched_batch.loc[0, "payee_llm"] == "Daily Grind Coffee"
+    assert enriched_batch.loc[1, "category_llm"] == "Home Improvement"
+    assert pd.isna(enriched_batch.loc[2, "payee_llm"])
+    assert fake_module.calls and fake_module.calls[0][0] == "batch"
+
+    fake_module.calls = []
+    client_single = {**client, "use_batch": False}
+    enriched_single = enrich_transactions_with_llm(df, client_single, batch_size=2)
+
+    pd.testing.assert_frame_equal(enriched_single, enriched_batch)
+    assert len(fake_module.calls) == len(df)
+    assert all(call[0] == "single" for call in fake_module.calls)
 
 def test_load_and_prepare_enriches_when_llm_client_provided(tmp_path):
     csv_path = tmp_path / "transactions.csv"
