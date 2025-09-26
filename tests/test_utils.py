@@ -365,7 +365,6 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     assert len(fake_module.calls) == len(df)
     assert all(call[0] == "single" for call in fake_module.calls)
 
-
 def test_load_and_prepare_enriches_when_llm_client_provided(tmp_path):
     csv_path = tmp_path / "transactions.csv"
     pd.DataFrame(
