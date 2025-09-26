@@ -171,8 +171,8 @@ def test_build_ofx_prefers_llm_enriched_fields():
 
     ofx_text = build_ofx(df, accttype="checking", acctid="12345")
 
-    assert "<NAME>DAILY GRIND COFFEE</NAME>" in ofx_text
-    assert "<MEMO>COFFEE PURCHASE (_DEBIT_)</MEMO>" in ofx_text
+    assert "<NAME>Daily Grind Coffee</NAME>" in ofx_text
+    assert "<MEMO>Coffee purchase (_DEBIT_)</MEMO>" in ofx_text
 
 
 def test_build_ofx_defaults_missing_dtposted(df_without_dates):

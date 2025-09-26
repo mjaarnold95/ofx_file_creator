@@ -149,7 +149,6 @@ def build_ofx(
             .fillna("")
             .str.replace(r"\r?\n", " ", regex=True)
             .str.strip()
-            .str.upper()
         )
 
         return (
