@@ -13,7 +13,9 @@ from utils.build_ofx import build_ofx
 from utils.cleaning import infer_trntype_series
 from utils.date_time import ofx_datetime, parse_time_to_timedelta
 from utils.id import make_fitid
+
 from utils.rules import load_rules
+from utils.etl import load_and_prepare
 
 
 @pytest.fixture
@@ -25,6 +27,20 @@ def df_without_dates():
             "trntype_norm": ["CREDIT"],
         }
     )
+
+
+@pytest.fixture
+def sample_transaction_csv(tmp_path):
+    df = pd.DataFrame(
+        {
+            "Date": ["2023-01-02"],
+            "Amount": ["123.45"],
+            "Description": ["Sample transaction"],
+        }
+    )
+    csv_path = tmp_path / "transactions.csv"
+    df.to_csv(csv_path, index=False)
+    return csv_path
 
 
 def test_ofx_datetime_formats_timestamp():
@@ -129,3 +145,13 @@ def test_infer_trntype_series_uses_custom_rules(tmp_path):
     )
 
     assert list(result) == ["PAYMENT", "CASH"]
+    
+def test_load_and_prepare_handles_csv(sample_transaction_csv):
+    df = load_and_prepare(sample_transaction_csv)
+
+    assert "amount_clean" in df.columns
+    assert df.loc[0, "amount_clean"] == pytest.approx(123.45)
+
+    assert "date_parsed" in df.columns
+    assert pd.Timestamp("2023-01-02", tz="UTC") == df.loc[0, "date_parsed"]
+    
