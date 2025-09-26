@@ -1,3 +1,12 @@
+"""Utilities for transforming cleaned transaction data into OFX documents.
+
+When transaction rows are missing a ``date_parsed`` value, the OFX specification
+still requires a posting timestamp.  To keep the generated files valid, the
+``build_ofx`` helper falls back to the statement end date (or the current UTC
+time when no statement range is available) so that each transaction includes a
+fully formatted ``<DTPOSTED>`` element instead of the string ``"None"``.
+"""
+
 import textwrap
 from uuid import uuid4
 
@@ -117,11 +126,13 @@ def build_ofx(
     name_series = escaped.str.slice(0, 32)
     memo_series = escaped
     
-    dtposted_series = (
-        df_txn["date_parsed"].apply(ofx_datetime)
-        if "date_parsed" in df_txn.columns
-        else pd.Series("", index=df_txn.index)
-    )
+    fallback_dtposted = dtend or ofx_datetime(now)
+    if "date_parsed" in df_txn.columns:
+        dtposted_series = df_txn["date_parsed"].apply(ofx_datetime).fillna(
+            fallback_dtposted
+        )
+    else:
+        dtposted_series = pd.Series(fallback_dtposted, index=df_txn.index)
     
     checknum_series = (
         df_txn["checknum"] if "checknum" in df_txn.columns else pd.Series(index=df_txn.index)

@@ -1,14 +1,27 @@
 import hashlib
+import re
 import sys
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from utils.build_ofx import build_ofx
 from utils.date_time import ofx_datetime, parse_time_to_timedelta
 from utils.id import make_fitid
+
+
+@pytest.fixture
+def df_without_dates():
+    return pd.DataFrame(
+        {
+            "amount_clean": [25.0],
+            "cleaned_desc": ["No Date Transaction"],
+            "trntype_norm": ["CREDIT"],
+        }
+    )
 
 
 def test_ofx_datetime_formats_timestamp():
@@ -68,3 +81,14 @@ def test_build_ofx_uses_transaction_date_range():
     assert "<DTSTART>20230101000000.000[0:UTC]</DTSTART>" in ofx_text
     assert "<DTEND>20230103000000.000[0:UTC]</DTEND>" in ofx_text
     assert "<FITID>ABC123</FITID>" in ofx_text
+
+
+def test_build_ofx_defaults_missing_dtposted(df_without_dates):
+    ofx_text = build_ofx(df_without_dates, accttype="checking", acctid="12345")
+    dtposted_match = re.search(r"<DTPOSTED>([^<]+)</DTPOSTED>", ofx_text)
+
+    assert dtposted_match is not None
+    dtposted_value = dtposted_match.group(1)
+
+    assert dtposted_value != "None"
+    assert re.fullmatch(r"\d{14}\.\d{3}\[0:UTC\]", dtposted_value)
