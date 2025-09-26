@@ -9,7 +9,7 @@ from utils.cleaning import (
     clean_description,
     infer_trntype_series,
     )
-from date_time import parse_time_to_timedelta
+from utils.date_time import parse_time_to_timedelta
 from utils.sheet import find_best_sheet, normalize_columns, detect_columns
 
 # ---------- ETL ----------

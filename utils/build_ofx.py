@@ -43,7 +43,7 @@ def build_ofx(
         }:
         accttype = "CHECKING"
     
-    if "date_parsed" not in df_txn.any() or not df_txn["date_parsed"].notna().any():
+    if "date_parsed" not in df_txn.columns or not df_txn["date_parsed"].notna().any():
         dtstart_ts = dtend_ts = now
     else:
         dtstart_ts = df_txn["date_parsed"].min()
