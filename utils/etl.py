@@ -10,14 +10,13 @@ from utils.cleaning import (
     infer_trntype_series,
     )
 from utils.date_time import parse_time_to_timedelta
-from utils.sheet import find_best_sheet, normalize_columns, detect_columns
+from utils.io import load_transactions
+from utils.sheet import normalize_columns, detect_columns
 
 # ---------- ETL ----------
 # noinspection PyTypeChecker
-def load_and_prepare(xlsx_path: Path) -> pd.DataFrame:
-    xl = pd.ExcelFile(xlsx_path)
-    sheet = find_best_sheet(xl)
-    df = xl.parse(sheet_name=sheet, dtype=object)
+def load_and_prepare(path: Path) -> pd.DataFrame:
+    df = load_transactions(path)
     df = normalize_columns(df)
     
     cols = detect_columns(df)
