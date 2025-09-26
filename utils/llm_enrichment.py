@@ -248,14 +248,24 @@ def _resolve_mlx_client_config(client: object) -> Optional[Dict[str, Any]]:
     if not data:
         return None
 
+    llm_model_value = str(data.setdefault("llm_model", "client") or "client")
+    llm_model_lower = llm_model_value.lower()
+
     framework = None
-    for key in ("framework", "provider", "type"):
-        if key in data:
-            framework = str(data[key])
-            break
+    if llm_model_lower != "client":
+        framework = llm_model_value
+    else:
+        for key in ("framework", "provider", "type"):
+            if key in data:
+                framework = str(data[key])
+                break
+
     explicit_flag = any(
         key in data and bool(data[key]) for key in ("mlx_lm", "use_mlx_lm")
     )
+    if llm_model_lower != "client":
+        explicit_flag = True
+
     if framework:
         if "mlx" not in framework.lower():
             return None

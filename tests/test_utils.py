@@ -18,7 +18,7 @@ from utils.validate import assert_ofx_ready
 
 from utils.rules import load_rules
 from utils.etl import load_and_prepare
-from utils.llm_enrichment import enrich_transactions_with_llm
+from utils.llm_enrichment import enrich_transactions_with_llm, _resolve_mlx_client_config
 
 
 @pytest.fixture
@@ -289,6 +289,14 @@ class FakeLLMClient:
         return responses
 
 
+def test_resolve_mlx_client_config_defaults_to_client():
+    cfg = {"llm_model": "client", "model": object(), "tokenizer": object()}
+    assert _resolve_mlx_client_config(cfg) is None
+
+    cfg_no_hint = {"model": object(), "tokenizer": object()}
+    assert _resolve_mlx_client_config(cfg_no_hint) is None
+
+
 def test_enrich_transactions_with_llm_batches_and_failures():
     df = pd.DataFrame(
         {
@@ -365,7 +373,7 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     client = {
         "model": object(),
         "tokenizer": fake_tokenizer,
-        "framework": "mlx_lm",
+        "llm_model": "mlx_lm",
         "generation_kwargs": {"max_tokens": 64},
     }
 

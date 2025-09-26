@@ -31,6 +31,9 @@ description. The model is asked to emit minified JSON with `payee`, `category`, 
   enrichment step.
 * **Batch sizing** – Adjust `llm_batch_size` to match the provider's rate limits. The
   default of 20 rows keeps requests small and avoids long prompts.
+* **Model selection** – The project defaults to `llm_model="client"`, which expects an
+  object that already knows how to issue completions. Override this with another value
+  (for example, `llm_model="mlx_lm"`) to activate provider-specific integrations.
 * **Cost awareness** – LLM calls can be expensive. Estimate token usage from the
   prompt template and size your batches accordingly. For exploratory runs, point the
   client at a lower-cost model or reduce the batch size.
@@ -47,7 +50,7 @@ from mlx_lm import load as mlx_load
 model, tokenizer = mlx_load("mlx-community/Llama-3.2-3B-Instruct-4bit")
 
 client = {
-    "framework": "mlx_lm",  # tells the helper to use the mlx integration
+    "llm_model": "mlx_lm",  # tells the helper to use the mlx integration
     "model": model,
     "tokenizer": tokenizer,
     "generation_kwargs": {"max_tokens": 128},  # forwarded to mlx_lm.generate
