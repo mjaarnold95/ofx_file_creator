@@ -15,6 +15,7 @@ import pandas as pd
 from utils.cleaning import infer_trntype, infer_trntype_series
 from utils.date_time import ofx_datetime
 from utils.id import make_fitid
+from utils.validate import assert_ofx_ready
 
 # ---------- OFX ----------
 def build_ofx(
@@ -27,6 +28,8 @@ def build_ofx(
     currency: str = "USD",
     starting_balance: float = 0.0,
     ) -> str:
+    fallback_timestamp = assert_ofx_ready(df_txn)
+
     now = pd.Timestamp.utcnow()
     dtserver = ofx_datetime(now)
     
@@ -52,11 +55,12 @@ def build_ofx(
         }:
         accttype = "CHECKING"
     
-    if "date_parsed" not in df_txn.columns or not df_txn["date_parsed"].notna().any():
-        dtstart_ts = dtend_ts = now
-    else:
+    has_dates = "date_parsed" in df_txn.columns and df_txn["date_parsed"].notna().any()
+    if has_dates:
         dtstart_ts = df_txn["date_parsed"].min()
         dtend_ts = df_txn["date_parsed"].max()
+    else:
+        dtstart_ts = dtend_ts = fallback_timestamp
     
     dtstart = ofx_datetime(dtstart_ts)
     dtend = ofx_datetime(dtend_ts)
@@ -126,7 +130,7 @@ def build_ofx(
     name_series = escaped.str.slice(0, 32)
     memo_series = escaped
     
-    fallback_dtposted = dtend or ofx_datetime(now)
+    fallback_dtposted = ofx_datetime(fallback_timestamp) or dtend or ofx_datetime(now)
     if "date_parsed" in df_txn.columns:
         dtposted_series = df_txn["date_parsed"].apply(ofx_datetime).fillna(
             fallback_dtposted

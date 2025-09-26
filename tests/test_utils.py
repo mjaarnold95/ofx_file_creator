@@ -13,6 +13,7 @@ from utils.build_ofx import build_ofx
 from utils.cleaning import infer_trntype_series
 from utils.date_time import ofx_datetime, parse_time_to_timedelta
 from utils.id import make_fitid
+from utils.validate import assert_ofx_ready
 
 from utils.rules import load_rules
 from utils.etl import load_and_prepare
@@ -25,9 +26,59 @@ def df_without_dates():
             "amount_clean": [25.0],
             "cleaned_desc": ["No Date Transaction"],
             "trntype_norm": ["CREDIT"],
+            "statement_end_date": [pd.Timestamp("2023-04-30", tz="UTC")],
         }
     )
 
+
+
+def test_assert_ofx_ready_accepts_valid_dataframe():
+    df = pd.DataFrame(
+        {
+            "amount_clean": [10.0, 5.0],
+            "date_parsed": [
+                pd.Timestamp("2023-01-01", tz="UTC"),
+                pd.Timestamp("2023-01-05", tz="UTC"),
+            ],
+        }
+    )
+
+    result = assert_ofx_ready(df)
+
+    assert result == pd.Timestamp("2023-01-05", tz="UTC")
+
+
+def test_assert_ofx_ready_rejects_missing_amount_column():
+    df = pd.DataFrame({"date_parsed": [pd.Timestamp("2023-01-01", tz="UTC")]})
+
+    with pytest.raises(ValueError, match="amount_clean"):
+        assert_ofx_ready(df)
+
+
+def test_assert_ofx_ready_requires_non_null_amounts():
+    df = pd.DataFrame(
+        {
+            "amount_clean": [pd.NA, pd.NA],
+            "statement_end_date": [pd.Timestamp("2023-01-31", tz="UTC"), pd.NaT],
+        }
+    )
+
+    with pytest.raises(ValueError, match="non-null 'amount_clean'"):
+        assert_ofx_ready(df)
+
+
+def test_assert_ofx_ready_accepts_fallback_timestamp():
+    fallback = pd.Timestamp("2023-02-28", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "amount_clean": [100.0],
+            "statement_end_date": [fallback],
+        }
+    )
+
+    result = assert_ofx_ready(df)
+
+    assert result == fallback
 
 @pytest.fixture
 def sample_transaction_csv(tmp_path):
@@ -41,6 +92,7 @@ def sample_transaction_csv(tmp_path):
     csv_path = tmp_path / "transactions.csv"
     df.to_csv(csv_path, index=False)
     return csv_path
+
 
 
 def test_ofx_datetime_formats_timestamp():
@@ -113,6 +165,25 @@ def test_build_ofx_defaults_missing_dtposted(df_without_dates):
     assert re.fullmatch(r"\d{14}\.\d{3}\[0:UTC\]", dtposted_value)
 
 
+
+def test_build_ofx_uses_fallback_timestamp_for_ranges():
+    fallback = pd.Timestamp("2023-03-31", tz="UTC")
+    df = pd.DataFrame(
+        {
+            "amount_clean": [12.0],
+            "trntype_norm": ["DEBIT"],
+            "fitid_norm": ["ID123"],
+            "cleaned_desc": ["Fallback transaction"],
+            "statement_end_date": [fallback],
+        }
+    )
+
+    ofx_text = build_ofx(df, accttype="checking", acctid="12345")
+    fallback_str = ofx_datetime(fallback)
+
+    assert f"<DTSTART>{fallback_str}</DTSTART>" in ofx_text
+    assert f"<DTEND>{fallback_str}</DTEND>" in ofx_text
+
 def test_infer_trntype_series_uses_custom_rules(tmp_path):
     config_path = tmp_path / "rules.json"
     config_path.write_text(
@@ -155,3 +226,4 @@ def test_load_and_prepare_handles_csv(sample_transaction_csv):
     assert "date_parsed" in df.columns
     assert pd.Timestamp("2023-01-02", tz="UTC") == df.loc[0, "date_parsed"]
     
+
