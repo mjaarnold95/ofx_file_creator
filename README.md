@@ -1,5 +1,7 @@
 # OFX File Creator
 
+![CI](https://github.com/mjaarnold95/ofx_file_creator/actions/workflows/ci.yml/badge.svg)
+
 Turn bank exports (CSV/Excel) into OFX files for import into personal finance tools.
 The `utils/` package normalizes columns, cleans text, infers transaction types, and
 renders OFX-compliant output. Optional LLM enrichment can provide nicer payee names and
