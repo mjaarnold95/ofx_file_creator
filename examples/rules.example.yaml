@@ -1,0 +1,31 @@
+# Example rule overrides for transaction type inference
+#
+# Usage:
+#   from utils.rules import load_rules
+#   rules = load_rules("examples/rules.example.yaml")
+#   df = load_and_prepare(path)
+#   df["trntype_norm"] = infer_trntype_series(
+#       df["amount_clean"], df.get("trntype"), df.get("cleaned_desc"), rules=rules
+#   )
+#   ofx = build_ofx(df, accttype="checking", acctid="12345")
+#
+# You can either replace the base rules or extend them. This file demonstrates
+# extending: add aliases, regex rules, and keyword rules without losing defaults.
+
+source_aliases:
+  extend:
+    XYZ: PAYMENT  # map vendor-specific code to OFX type
+
+# Regex rules run first, with case-insensitive matching by default.
+rules_regex:
+  extend:
+    - pattern: "\\bESPRESSO\\b"
+      trntype: CASH
+    - pattern: "\\bACH\\s*PAY(?:MENT)?\\b"
+      trntype: DIRECTDEBIT
+
+# Keyword rules are simpler contains checks applied after regex.
+keyword_rules:
+  extend:
+    - ["\\bGAS\\b", "DEBIT"]
+    - ["\\bREFUND\\b", "CREDIT"]

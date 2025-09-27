@@ -1,71 +1,122 @@
 # OFX File Creator
 
-This project helps transform raw bank or credit card exports into OFX files that can be
-imported into personal finance tools. The utilities under `utils/` normalize common CSV
-fields, clean descriptions, infer transaction types, and assemble OFX-compliant output.
+Turn bank exports (CSV/Excel) into OFX files for import into personal finance tools.
+The `utils/` package normalizes columns, cleans text, infers transaction types, and
+renders OFX-compliant output. Optional LLM enrichment can provide nicer payee names and
+categories.
 
-## LLM-powered enrichment (optional)
+## Quick start
 
-Some workflows benefit from model-generated payee names or categories. The
-`utils.llm_enrichment.enrich_transactions_with_llm` helper can be enabled via the
-`load_and_prepare` function:
+Install dependencies (macOS):
 
-```python
-from utils.etl import load_and_prepare
-from utils.llm_enrichment import enrich_transactions_with_llm
-
-client = ...  # your LLM SDK client
-prepared = load_and_prepare(path_to_csv, llm_client=client, llm_batch_size=10)
+```bash
+python3 -m pip install -r requirements.txt
+# Optional for tests or local LLM demos
+python3 -m pip install pytest pyyaml mlx mlx-lm
 ```
 
-When an `llm_client` is supplied, the loader will batch transactions and send prompts
-containing the raw description, the selected payee display text, and the cleaned
-description. The model is asked to emit minified JSON with `payee`, `category`, and
-`description` fields. Parsed results are added to the dataframe as `payee_llm`,
-`category_llm`, and `description_llm` columns.
+Create an OFX from a CSV:
 
-### Configuring clients
+```python
+from pathlib import Path
+from utils.etl import load_and_prepare
+from utils.build_ofx import build_ofx
 
-* **API keys** – Follow the vendor instructions for your chosen SDK (e.g., OpenAI,
-  Anthropic). Export any required tokens (such as `OPENAI_API_KEY`) before running the
-  enrichment step.
-* **Batch sizing** – Adjust `llm_batch_size` to match the provider's rate limits. The
-  default of 20 rows keeps requests small and avoids long prompts.
-* **Model selection** – The project defaults to `llm_model="client"`, which expects an
-  object that already knows how to issue completions. Override this with another value
-  (for example, `llm_model="mlx_lm"`) to activate provider-specific integrations.
-* **Cost awareness** – LLM calls can be expensive. Estimate token usage from the
-  prompt template and size your batches accordingly. For exploratory runs, point the
-  client at a lower-cost model or reduce the batch size.
+df = load_and_prepare(Path("transactions.csv"))
+ofx = build_ofx(df, accttype="checking", acctid="12345")
+Path("transactions.ofx").write_text(ofx, encoding="utf-8")
+```
 
-### Using mlx-lm locally
+Or run the example CLI in `main.py` after editing the file paths.
 
-Apple silicon users can rely on [`mlx-lm`](https://github.com/ml-explore/mlx-examples)
-for local inference. Load the model with `mlx_lm.utils.load` (or `mlx_lm.load`) and
-pass a configuration dictionary to `load_and_prepare`:
+### Try it with the included example
+
+- Input: `examples/transactions.sample.csv`
+- Run:
+   ```bash
+   python3 examples/generate_ofx.py
+   ```
+- Output: `examples/transactions.sample.ofx`
+
+## How it works (pipeline)
+
+1) Load via `utils.io.load_transactions` (CSV/Excel; sheet chosen by
+   `utils.sheet.find_best_sheet`). Columns are read as `object` dtype.
+2) Normalize with `utils.sheet.normalize_columns` and map vendor columns to canonical
+   names (`acctnum, date, time, amount, description, trntype, fitid, ...`) via
+   `utils.sheet.detect_columns`.
+3) ETL (`utils.etl.load_and_prepare`) builds:
+   - `raw_desc`, `payee_display` (coalesced text); `cleaned_desc` (uppercased, squashed).
+   - `date_parsed` (UTC) + optional `time` parsing (supports Excel fractions and HH:MM[:SS]).
+   - `amount_clean` (handles `$`, commas, parentheses negatives, empty/NaN).
+   - Optional LLM columns: `payee_llm`, `category_llm`, `description_llm`.
+   - `trntype_norm` via rule-driven inference; `fitid_norm` cleanup if provided.
+4) Validate with `utils.validate.assert_ofx_ready` (`amount_clean` required, timestamp fallback allowed).
+5) Render with `utils.build_ofx.build_ofx`:
+   - `<DTSTART>/<DTEND>` from `date_parsed` range or fallback.
+   - `<DTPOSTED>` always set (never the string "None").
+   - Name/memo precedence: `payee_llm` → `payee_display` → `posting_memo` → `cleaned_desc` → `raw_desc`.
+   - `TRNTYPE` from `trntype_norm` or inferred from amount; `FITID` generated if missing.
+
+## Optional LLM enrichment
+
+Enable by passing `llm_client` to `load_and_prepare`:
+
+```python
+client = ...  # your LLM SDK, callable, or mlx-lm config dict
+df = load_and_prepare(Path("transactions.csv"), llm_client=client, llm_batch_size=10)
+```
+
+Client shapes supported: an object with `generate_batch(prompts)`, a callable, or an
+`mlx-lm` configuration dict. See `tests/test_utils.py` for concrete examples.
+
+### Using mlx-lm locally (Apple silicon)
 
 ```python
 from mlx_lm import load as mlx_load
+from utils.etl import load_and_prepare
 
 model, tokenizer = mlx_load("mlx-community/Llama-3.2-3B-Instruct-4bit")
-
 client = {
-    "llm_model": "mlx_lm",  # tells the helper to use the mlx integration
+    "llm_model": "mlx_lm",
     "model": model,
     "tokenizer": tokenizer,
-    "generation_kwargs": {"max_tokens": 128},  # forwarded to mlx_lm.generate
+    "generation_kwargs": {"max_tokens": 128},
 }
-
-prepared = load_and_prepare(path_to_csv, llm_client=client, llm_batch_size=10)
+df = load_and_prepare(Path("transactions.csv"), llm_client=client, llm_batch_size=10)
 ```
 
-Set `use_batch=False` in the configuration if you prefer to call `mlx_lm.generate`
-per prompt instead of batching through `mlx_lm.batch_generate`. Remember that mlx-lm
-requires the base [`mlx`](https://pypi.org/project/mlx/) package, which is only
-available on recent macOS releases.
+Set `use_batch=False` to call `mlx_lm.generate` per prompt. LLM usage is optional; the
+pipeline works fully offline when `llm_client=None`.
 
-### Offline or air-gapped usage
+## Customizing transaction type rules (template: `examples/rules.example.yaml`)
 
-Leave `llm_client=None` (the default) to skip enrichment entirely. The OFX generation
-pipeline remains fully functional without model calls, making it safe to run offline or
-in environments without API access.
+Rules live in `utils/rules.py` and support JSON/YAML overrides. See
+`examples/rules.example.yaml` for a ready-to-tweak template showing `extend`/`replace`:
+
+```python
+from utils.rules import load_rules
+from utils.cleaning import infer_trntype_series
+
+rules = load_rules("examples/rules.example.yaml")
+df = load_and_prepare(Path("transactions.csv"))
+df["trntype_norm"] = infer_trntype_series(
+    df["amount_clean"], df.get("trntype"), df.get("cleaned_desc"), rules=rules
+)
+```
+
+## Testing
+
+```bash
+python3 -m pytest -q
+```
+
+Tests cover time parsing (incl. Excel fractions), amount cleaning, rule overrides,
+LLM batching/parsing, FITID generation, and OFX field precedence.
+
+## Gotchas
+
+- Parentheses amounts are negatives; empty/"nan" handled.
+- If both debit/credit columns exist, net amount = credit - debit.
+- `derive_acctid_from_path` extracts digits from filenames; otherwise uses a stub + hash.
+- `NAME` is escaped and trimmed to 32 chars for OFX.

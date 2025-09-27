@@ -1,4 +1,5 @@
 """Utilities for enriching transactions with large language models."""
+
 from __future__ import annotations
 
 import json
@@ -177,7 +178,10 @@ def enrich_transactions_with_llm(
         }
     )
 
-def _try_mlx_lm_invocation(client: object, prompts: Sequence[str]) -> Optional[List[str]]:
+
+def _try_mlx_lm_invocation(
+    client: object, prompts: Sequence[str]
+) -> Optional[List[str]]:
     """Attempt to route prompts through an ``mlx-lm`` client configuration."""
 
     config = _resolve_mlx_client_config(client)
@@ -194,7 +198,9 @@ def _try_mlx_lm_invocation(client: object, prompts: Sequence[str]) -> Optional[L
             "mlx_lm is required for this client configuration but could not be imported"
         ) from exc
 
-    batch_fn = config.get("batch_generate") or getattr(mlx_module, "batch_generate", None)
+    batch_fn = config.get("batch_generate") or getattr(
+        mlx_module, "batch_generate", None
+    )
     generate_fn = config.get("generate") or getattr(mlx_module, "generate", None)
 
     model = config["model"]
@@ -299,6 +305,7 @@ def _resolve_mlx_client_config(client: object) -> Optional[Dict[str, Any]]:
         config["sampling_params"] = data["sampling_params"]
 
     return config
+
 
 def _extract_mlx_batch_texts(responses: Any) -> List[str]:
     """Normalize batch generation outputs into a list of strings."""
