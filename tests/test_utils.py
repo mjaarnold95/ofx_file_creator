@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from typing import Optional, cast
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
@@ -105,7 +106,9 @@ def test_ofx_datetime_formats_timestamp():
 
 def test_ofx_datetime_handles_none():
     assert ofx_datetime(None) is None
-    assert ofx_datetime(pd.NaT) is None
+    # pd.NaT is a pandas NA singleton; cast to Optional[pd.Timestamp] to satisfy
+    # static type checkers while preserving runtime behavior.
+    assert ofx_datetime(cast(Optional[pd.Timestamp], pd.NaT)) is None
 
 
 def test_parse_time_to_timedelta_parses_strings():
@@ -301,7 +304,7 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     )
 
     fake_module = types.ModuleType("mlx_lm")
-    fake_module.calls = []
+    setattr(fake_module, "calls", [])
 
     class FakeTokenizer:
         eos_token_ids = [0]
@@ -336,8 +339,8 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
         fake_module.calls.append(("single", prompt, kwargs))
         return response_for_prompt(prompt)
 
-    fake_module.batch_generate = fake_batch_generate
-    fake_module.generate = fake_generate
+    setattr(fake_module, "batch_generate", fake_batch_generate)
+    setattr(fake_module, "generate", fake_generate)
 
     monkeypatch.setitem(sys.modules, "mlx_lm", fake_module)
 
@@ -355,7 +358,7 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     assert pd.isna(enriched_batch.loc[2, "payee_llm"])
     assert fake_module.calls and fake_module.calls[0][0] == "batch"
 
-    fake_module.calls = []
+    setattr(fake_module, "calls", [])
     client_single = {**client, "use_batch": False}
     enriched_single = enrich_transactions_with_llm(df, client_single, batch_size=2)
 
