@@ -1,5 +1,5 @@
 # Example rule overrides for transaction type inference
-#
+
 # Usage:
 #   from utils.rules import load_rules
 #   rules = load_rules("examples/rules.example.yaml")
@@ -8,24 +8,85 @@
 #       df["amount_clean"], df.get("trntype"), df.get("cleaned_desc"), rules=rules
 #   )
 #   ofx = build_ofx(df, accttype="checking", acctid="12345")
-#
-# You can either replace the base rules or extend them. This file demonstrates
-# extending: add aliases, regex rules, and keyword rules without losing defaults.
+
+# Notes:
+# - This file demonstrates common override patterns: `extend` to add to the
+#   default RuleSet and `replace` to fully substitute a section.
+# - Regex rules are applied before keyword rules. Use regex for structured
+#   matches (merchant codes, abbreviations), keyword rules for simple contains
+#   matches.
 
 source_aliases:
+  # Examples of alias overrides. Use `extend` to add to defaults or `replace`
+  # to provide a full mapping.
   extend:
-    XYZ: PAYMENT  # map vendor-specific code to OFX type
+    XYZ: PAYMENT       # vendor-specific token -> OFX TRNTYPE
+    DR: DEBIT
+    CR: CREDIT
 
-# Regex rules run first, with case-insensitive matching by default.
+  # Replace example (uncomment to use):
+  # replace:
+  #   D: DEBIT
+  #   C: CREDIT
+
+
 rules_regex:
+  # Add regex rules (applied in order). Each entry may include `pattern`,
+  # `trntype` (output), and optional `flags` (string, list or integer).
   extend:
     - pattern: "\\bESPRESSO\\b"
       trntype: CASH
+
+    - pattern: "\\bMOBILE\\s+DEPOSIT\\b"
+      trntype: DEP
+
+    - pattern: "\\bCHECK\\b"
+      trntype: CHECK
+
+    - pattern: "\\bATM\\b"
+      trntype: ATM
+
+    - pattern: "\\b(?:VENMO|CASH\\s+APP|ZELLE|P2P)\\b"
+      trntype: PAYMENT
+
     - pattern: "\\bACH\\s*PAY(?:MENT)?\\b"
       trntype: DIRECTDEBIT
 
-# Keyword rules are simpler contains checks applied after regex.
+    # Example with explicit flags (case-insensitive by default so these are
+    # illustrative): provide a single string or a list, e.g. "I" or ["I","M"].
+    - pattern: "refund|returned"
+      trntype: CREDIT
+      flags: I
+
+  # Replace example (uncomment to replace all regex rules):
+  # replace:
+  #   - pattern: "\\bSPECIAL\\b"
+  #     trntype: OTHER
+
+
 keyword_rules:
+  # Keyword rules are simpler 'contains' checks applied after regex rules.
+  # Each entry may be a 2-item list [pattern, trntype] or a mapping.
   extend:
     - ["\\bGAS\\b", "DEBIT"]
+    - ["\\bFUEL\\b", "DEBIT"]
+    - ["\\bGROC(ERY|ERIES)?\\b", "DEBIT"]
+    - ["\\bPAYROLL\\b", "DIRECTDEP"]
+    - ["\\bINTEREST\\b", "INT"]
+    - ["\\bDIVIDEND\\b", "DIV"]
+    - ["\\bSERVICE CHARGE\\b", "FEE"]
     - ["\\bREFUND\\b", "CREDIT"]
+    - ["\\bREVERSE\\b", "CREDIT"]
+
+  # Replace example (uncomment to replace keyword rules entirely):
+  # replace:
+  #   - ["\\bSPECIALKEY\\b", "OTHER"]
+
+
+# Advanced examples and tips:
+# - Order matters: exact aliases and explicit trntype values are handled first.
+# - Regex rules get priority for structured matches; keyword rules are fallback.
+# - Use `replace` when you need a bespoke rule set for a particular bank/vendor.
+# - Flags accepted: string tokens like "I", "M", "S" or lists of tokens.
+# - Keep rules narrow to avoid false positives; prefer anchored regexes when
+#   matching short common words.
