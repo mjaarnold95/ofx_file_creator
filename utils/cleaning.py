@@ -1,3 +1,10 @@
+"""Data cleaning helpers.
+
+Contains vectorized utilities for parsing amounts and normalizing free-text
+descriptions. Transaction-type inference has been moved to `utils.trntype`;
+`utils.cleaning` re-exports the inference functions for compatibility.
+"""
+
 import re
 from typing import Optional
 
