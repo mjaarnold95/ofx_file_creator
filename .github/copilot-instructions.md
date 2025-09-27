@@ -42,7 +42,9 @@ Purpose: turn bank exports (CSV/Excel) into OFX. Pipeline = load â†’ normalize â
 ## Key files to study and extend
 - `utils/etl.py`: the orchestrated loader; extend here to support new vendor columns or enrichment fields.
 - `utils/build_ofx.py`: OFX assembly and field precedence; careful with escaping and max lengths (`NAME` sliced to 32 chars).
-- `utils/cleaning.py`: amount parsing, description cleaning, TRNTYPE inference.
+- `utils/cleaning.py`: amount parsing and description cleaning. TRNTYPE inference
+  is implemented in `utils.trntype` (preferred); `utils.cleaning` re-exports the
+  functions for backwards compatibility.
 - `utils/rules.py`: default rules and override/merge logic; supports YAML/JSON with `extend`/`replace` keys.
 - `utils/date_time.py`: UTC coercion and OFX timestamp formatting; robust time parsing (`parse_time_to_timedelta`).
 - `utils/io.py` and `utils/sheet.py`: input dispatch and sheet/column detection.
