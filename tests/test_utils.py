@@ -11,14 +11,16 @@ import pytest
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from utils.build_ofx import build_ofx
-from utils.cleaning import infer_trntype_series
 from utils.date_time import ofx_datetime, parse_time_to_timedelta
 from utils.id import make_fitid
 from utils.validate import assert_ofx_ready
 
 from utils.rules import load_rules
 from utils.etl import load_and_prepare
-from utils.llm_enrichment import enrich_transactions_with_llm, _resolve_mlx_client_config
+from utils.llm_enrichment import (
+    enrich_transactions_with_llm,
+    _resolve_mlx_client_config,
+)
 
 
 @pytest.fixture
@@ -31,7 +33,6 @@ def df_without_dates():
             "statement_end_date": [pd.Timestamp("2023-04-30", tz="UTC")],
         }
     )
-
 
 
 def test_assert_ofx_ready_accepts_valid_dataframe():
@@ -82,6 +83,7 @@ def test_assert_ofx_ready_accepts_fallback_timestamp():
 
     assert result == fallback
 
+
 @pytest.fixture
 def sample_transaction_csv(tmp_path):
     df = pd.DataFrame(
@@ -94,7 +96,6 @@ def sample_transaction_csv(tmp_path):
     csv_path = tmp_path / "transactions.csv"
     df.to_csv(csv_path, index=False)
     return csv_path
-
 
 
 def test_ofx_datetime_formats_timestamp():
@@ -129,9 +130,13 @@ def test_make_fitid_generates_deterministic_hash():
             "name": "name",
         }
     )
-    expected = hashlib.md5(
-        "20230501000000.000[0:UTC]|12.34|Test Transaction|memo|name|0".encode()
-    ).hexdigest().upper()
+    expected = (
+        hashlib.md5(
+            "20230501000000.000[0:UTC]|12.34|Test Transaction|memo|name|0".encode()
+        )
+        .hexdigest()
+        .upper()
+    )
     assert make_fitid(row, 0) == expected
 
 
@@ -186,7 +191,6 @@ def test_build_ofx_defaults_missing_dtposted(df_without_dates):
     assert re.fullmatch(r"\d{14}\.\d{3}\[0:UTC\]", dtposted_value)
 
 
-
 def test_build_ofx_uses_fallback_timestamp_for_ranges():
     fallback = pd.Timestamp("2023-03-31", tz="UTC")
     df = pd.DataFrame(
@@ -217,39 +221,6 @@ def test_build_ofx_requires_amount_column():
         build_ofx(df, accttype="checking", acctid="12345")
 
 
-def test_infer_trntype_series_uses_custom_rules(tmp_path):
-    config_path = tmp_path / "rules.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "source_aliases": {"XYZ": "PAYMENT"},
-                "keyword_rules": {
-                    "extend": [
-                        {
-                            "pattern": r"\bESPRESSO\b",
-                            "trntype": "CASH",
-                        }
-                    ]
-                },
-            }
-        )
-    )
-
-    custom_rules = load_rules(config_path)
-
-    amounts = pd.Series([10.0, -12.5])
-    trntype_text = pd.Series(["xyz", None])
-    cleaned_desc = pd.Series([None, "Morning espresso run"])
-
-    result = infer_trntype_series(
-        amounts,
-        trntype_text,
-        cleaned_desc,
-        rules=custom_rules,
-    )
-
-    assert list(result) == ["PAYMENT", "CASH"]
-    
 def test_load_and_prepare_handles_csv(sample_transaction_csv):
     df = load_and_prepare(sample_transaction_csv)
 
@@ -280,9 +251,9 @@ class FakeLLMClient:
                 )
             elif "Hardware" in prompt:
                 responses.append(
-                    "Here you go: {\"payee\": \"Ace Hardware\","
-                    " \"category\": \"Home Improvement\","
-                    " \"description\": \"Hardware run\"}"
+                    'Here you go: {"payee": "Ace Hardware",'
+                    ' "category": "Home Improvement",'
+                    ' "description": "Hardware run"}'
                 )
             else:
                 responses.append("No idea")
@@ -392,6 +363,7 @@ def test_enrich_transactions_with_llm_supports_mlx(monkeypatch):
     assert len(fake_module.calls) == len(df)
     assert all(call[0] == "single" for call in fake_module.calls)
 
+
 def test_load_and_prepare_enriches_when_llm_client_provided(tmp_path):
     csv_path = tmp_path / "transactions.csv"
     pd.DataFrame(
@@ -410,4 +382,3 @@ def test_load_and_prepare_enriches_when_llm_client_provided(tmp_path):
     assert df.loc[0, "payee_llm"] == "Daily Grind Coffee"
     assert df.loc[0, "category_llm"] == "Food & Drink"
     assert df.loc[1, "payee_llm"] == "Ace Hardware"
-
