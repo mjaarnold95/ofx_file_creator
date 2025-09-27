@@ -15,7 +15,9 @@ Purpose: turn bank exports (CSV/Excel) into OFX. Pipeline = load â†’ normalize â
     - `amount_clean` vectorized via `utils.cleaning.clean_amount_series` (handles commas, $ signs, parenthesis negatives).
     - `cleaned_desc` uppercased, whitespace collapsed.
     - Optional LLM enrichment adds `payee_llm, category_llm, description_llm`.
-    - `trntype_norm` inferred by `utils.cleaning.infer_trntype_series` using `utils.rules.DEFAULT_RULES`.
+    - `trntype_norm` inferred by `utils.trntype.infer_trntype_series` using `utils.rules.DEFAULT_RULES`.
+      Note: `utils.cleaning` still re-exports `infer_trntype`/`infer_trntype_series` for
+      backwards compatibility, but prefer `utils.trntype` for new code.
     - `fitid_norm` (cleaned original id) if present.
   - Validation: `utils.validate.assert_ofx_ready(df)` requires column `amount_clean` and at least one usable timestamp (prefers `date_parsed`, falls back to statement dates).
   - Rendering: `utils.build_ofx.build_ofx`

@@ -93,19 +93,28 @@ pipeline works fully offline when `llm_client=None`.
 
 ## Customizing transaction type rules (template: `examples/rules.example.yaml`)
 
+df = load_and_prepare(Path("transactions.csv"))
+df["trntype_norm"] = infer_trntype_series(
 Rules live in `utils/rules.py` and support JSON/YAML overrides. See
-`examples/rules.example.yaml` for a ready-to-tweak template showing `extend`/`replace`:
+`examples/rules.example.yaml` for a ready-to-tweak template showing `extend`/`replace`.
+
+The canonical API for applying rule-driven transaction-type inference is
+provided by `utils.trntype` (preferred):
 
 ```python
 from utils.rules import load_rules
-from utils.cleaning import infer_trntype_series
+from utils.trntype import infer_trntype_series
 
 rules = load_rules("examples/rules.example.yaml")
 df = load_and_prepare(Path("transactions.csv"))
 df["trntype_norm"] = infer_trntype_series(
-    df["amount_clean"], df.get("trntype"), df.get("cleaned_desc"), rules=rules
+   df["amount_clean"], df.get("trntype"), df.get("cleaned_desc"), rules=rules
 )
 ```
+
+For backwards compatibility `utils.cleaning` re-exports `infer_trntype` and
+`infer_trntype_series`, so existing code that imports from
+`utils.cleaning` will continue to work.
 
 ## Testing
 
