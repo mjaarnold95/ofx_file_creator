@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 from dataclasses import dataclass
-from collections.abc import Mapping
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence as Seq
 
 import pandas as pd
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _PROMPT_TEMPLATE = (
     "You are a financial data enrichment assistant.\n"
-    "Given details about a bank transaction, infer the best-guess payee name,\n"
+    "Given details about a bank transaction, or by researching the transaction details online if unknown, generate the best-guess payee name,\n"
     "the spending category, and a concise user-facing description.\n"
     "Respond ONLY with minified JSON following this schema:\n"
     '{{"payee": string | null, "category": string | null, "description": string | null}}.\n'
@@ -27,49 +28,141 @@ _PROMPT_TEMPLATE = (
 )
 
 
+def _normalize_responses(obj: Any) -> List[Any]:
+    """Return *obj* as a list while preserving common response containers."""
+
+    if obj is None:
+        return []
+
+    if isinstance(obj, str):
+        return [obj]
+
+    if isinstance(obj, (bytes, bytearray)):
+        return [obj.decode("utf-8", "replace")]
+
+    if isinstance(obj, Mapping):  # e.g. {"text": "..."} or {"responses": [...]}
+        # Try to find common container keys
+        for key in ("responses", "texts", "choices", "text"):
+            if key in obj and obj[key] is not None:
+                val = obj[key]
+                # If text is a single value, wrap; if sequence, normalize to list
+                if isinstance(val, str) or not isinstance(val, Sequence):
+                    return [val]
+                return list(val)
+        # Fallback: treat mapping itself as one response
+        return [obj]
+
+    if isinstance(obj, Sequence):
+        return list(obj)
+
+    return [obj]
+
+
+def _coerce_response_value(value: Any) -> Any:
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", "replace")
+    return value
+
+
 @dataclass
 class _ClientInvoker:
     client: object
 
-    def invoke(self, prompts: Sequence[str]) -> List[str]:
-        """Call the provided LLM client and return a list of response strings."""
+    def _resolve_callable(self, name: str) -> Optional[Callable[[Seq[str]], Any]]:
+        # If client has attribute that is callable, return a wrapper
+        attr = getattr(self.client, name, None)
+        if callable(attr):
+            return lambda prompts: attr(prompts)
+        # If client is a mapping and contains a callable under the name, return wrapper
+        if isinstance(self.client, Mapping):
+            fn = self.client.get(name)
+            if callable(fn):
+                return lambda prompts: fn(prompts)
+        return None
 
-        mlx_result = _try_mlx_lm_invocation(self.client, prompts)
-        if mlx_result is not None:
-            return mlx_result
-        if hasattr(self.client, "generate_batch"):
-            return list(self.client.generate_batch(list(prompts)))
+    def invoke(self, prompts: Seq[str]) -> List[Any]:
+        # Prefer specialized mlx-lm route
+        try:
+            mlx_candidates = _try_mlx_lm_invocation(self.client, prompts)
+            if mlx_candidates is not None:
+                return mlx_candidates
+        except Exception:
+            # Log and continue to other invocation methods
+            logger.debug(
+                "mlx-lm invocation failed; falling back to generic client",
+                exc_info=True,
+            )
 
-        if callable(self.client):
-            return [str(self.client(prompt)) for prompt in prompts]
-
-        if hasattr(self.client, "generate"):
-            return [str(getattr(self.client, "generate")(prompt)) for prompt in prompts]
-
-        raise AttributeError(
-            "LLM client must provide a 'generate_batch', 'generate', or be callable"
+        # Try generate_batch style
+        batch_fn = self._resolve_callable("generate_batch") or self._resolve_callable(
+            "batch_generate"
         )
+        if batch_fn is not None:
+            res = batch_fn(prompts)
+            return _normalize_responses(res)
+
+        # Try single-call generate function (will be invoked per prompt)
+        gen_fn = self._resolve_callable("generate")
+        if gen_fn is not None:
+            outputs = []
+            for p in prompts:
+                try:
+                    out = gen_fn([p]) if False else gen_fn(p)  # prefer direct call
+                except TypeError:
+                    # Some generate APIs expect keyword args or single-prompt lists; attempt both patterns
+                    try:
+                        out = gen_fn(prompt=p)
+                    except Exception as exc:
+                        raise
+                outputs.append(out)
+            return _normalize_responses(outputs)
+
+        # If client is directly callable, try calling with list first
+        if callable(self.client):
+            try:
+                out = self.client(prompts)
+                normalized = _normalize_responses(out)
+                if len(normalized) == len(prompts):
+                    return normalized
+                # Not a batch response -> fall back to per-item calls
+            except TypeError:
+                pass
+            # Call per-prompt
+            outputs = [self.client(p) for p in prompts]
+            return _normalize_responses(outputs)
+
+        # As last resort, attempt to treat client as mapping with 'model'/'tokenizer' (handled in mlx function)
+        raise RuntimeError("LLM client does not expose a supported invocation method")
 
 
-def _coerce_str(value: object):
+def _coerce_str(value: Any) -> object:
+    """Coerce arbitrary input into a trimmed string or pandas.NA.
+
+    We accept Any here and carefully call pd.isna inside a try/except to
+    avoid mypy overload issues when the argument is a generic object.
+    """
     if value is None:
         return pd.NA
+    # Guard usage of pd.isna: it has several overloads and some don't accept
+    # bare 'object' typed values. Use try/except to preserve runtime behavior
+    # while keeping mypy satisfied.
     try:
         if pd.isna(value):
             return pd.NA
-    except TypeError:
+    except Exception:
         pass
     text = str(value).strip()
     return text if text else pd.NA
 
 
-def _safe_value(value: object) -> str:
+def _safe_value(value: Any) -> str:
+    """Return a safe string for display; empty string for None/NA values."""
     if value is None:
         return ""
     try:
         if pd.isna(value):
             return ""
-    except TypeError:
+    except Exception:
         pass
     text = str(value)
     return text if text else ""
@@ -88,6 +181,7 @@ def _parse_response(raw: object) -> dict:
     except json.JSONDecodeError:
         pass
 
+    # Try to extract JSON substring
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -147,28 +241,38 @@ def enrich_transactions_with_llm(
         batch_indices = index[start : start + len(batch_prompts)]
         try:
             responses = invoker.invoke(batch_prompts)
-        except Exception as exc:  # pragma: no cover - logging side-effect
-            logger.warning("LLM enrichment request failed: %s", exc)
+        except Exception as exc:
+            logger.exception("LLM invocation failed for batch starting at %s", start)
+            # Leave these entries as NA and continue
             continue
 
         if len(responses) != len(batch_prompts):
-            logger.warning(
-                "LLM client returned %s responses for %s prompts",
+            # Try to normalize: if single string for whole batch, attempt to split into per-prompt responses
+            logger.debug(
+                "Unexpected response length from LLM: %s (expected %s). Normalizing.",
                 len(responses),
                 len(batch_prompts),
             )
-            continue
+            # If single combined response, attempt to parse it as one JSON and replicate (best-effort)
+            if len(responses) == 1:
+                responses = [responses[0]] * len(batch_prompts)
+            else:
+                # Fall back: skip this batch
+                logger.warning("Skipping LLM batch due to mismatched response count")
+                continue
 
         for idx, raw_response in zip(batch_indices, responses):
             try:
-                data = _parse_response(raw_response)
-            except Exception as exc:  # pragma: no cover - logging side-effect
-                logger.debug("Could not parse LLM response for index %s: %s", idx, exc)
+                parsed = _parse_response(raw_response)
+            except Exception:
+                # If parsing fails, try to coerce raw string into something useful
+                logger.debug("Failed to parse LLM response; storing NA", exc_info=True)
                 continue
 
-            payee_series.at[idx] = _coerce_str(data.get("payee"))
-            category_series.at[idx] = _coerce_str(data.get("category"))
-            description_series.at[idx] = _coerce_str(data.get("description"))
+            # Extract and coerce values
+            payee_series.at[idx] = _coerce_str(parsed.get("payee"))
+            category_series.at[idx] = _coerce_str(parsed.get("category"))
+            description_series.at[idx] = _coerce_str(parsed.get("description"))
 
     return pd.DataFrame(
         {
@@ -179,9 +283,7 @@ def enrich_transactions_with_llm(
     )
 
 
-def _try_mlx_lm_invocation(
-    client: object, prompts: Sequence[str]
-) -> Optional[List[str]]:
+def _try_mlx_lm_invocation(client: object, prompts: Seq[str]) -> Optional[List[str]]:
     """Attempt to route prompts through an ``mlx-lm`` client configuration."""
 
     config = _resolve_mlx_client_config(client)
@@ -189,11 +291,8 @@ def _try_mlx_lm_invocation(
         return None
 
     try:
-        # Import lazily so downstream projects without mlx-lm installed still work.
-        import importlib
-
         mlx_module = importlib.import_module("mlx_lm")
-    except Exception as exc:  # pragma: no cover - environment-specific
+    except Exception as exc:
         raise RuntimeError(
             "mlx_lm is required for this client configuration but could not be imported"
         ) from exc
@@ -205,37 +304,23 @@ def _try_mlx_lm_invocation(
 
     model = config["model"]
     tokenizer = config["tokenizer"]
-    tokenize_kwargs = config.get("tokenize_kwargs", {})
     generation_kwargs = dict(config.get("generation_kwargs", {}))
-    max_tokens = generation_kwargs.pop("max_tokens", None)
-    sampling_params = config.get("sampling_params")
-    if sampling_params is not None:
-        generation_kwargs.setdefault("sampling_params", sampling_params)
+    use_batch = config.get("use_batch", True)
 
-    if batch_fn is not None and config.get("use_batch", True):
-        batch_kwargs = dict(generation_kwargs)
-        if max_tokens is not None:
-            batch_kwargs.setdefault("max_tokens", max_tokens)
-        if tokenize_kwargs:
-            batch_kwargs.setdefault("tokenize_kwargs", tokenize_kwargs)
-        responses = batch_fn(model, tokenizer, prompts, **batch_kwargs)
+    if batch_fn is not None and use_batch:
+        # Call batch function and extract texts
+        responses = batch_fn(model, tokenizer, prompts, **generation_kwargs)
         texts = _extract_mlx_batch_texts(responses)
-        return [str(text) for text in texts]
+        return [str(t) for t in texts]
 
     if generate_fn is None:
         raise AttributeError(
             "mlx_lm client must supply a 'generate' function when batch generation is disabled"
         )
 
-    single_kwargs = dict(generation_kwargs)
-    if max_tokens is not None:
-        single_kwargs.setdefault("max_tokens", max_tokens)
-    if tokenize_kwargs:
-        single_kwargs.setdefault("tokenize_kwargs", tokenize_kwargs)
-
     outputs = []
     for prompt in prompts:
-        response = generate_fn(model, tokenizer, prompt=prompt, **single_kwargs)
+        response = generate_fn(model, tokenizer, prompt=prompt, **generation_kwargs)
         outputs.append(_extract_mlx_single_text(response))
     return outputs
 
@@ -272,10 +357,9 @@ def _resolve_mlx_client_config(client: object) -> Optional[Dict[str, Any]]:
     if llm_model_lower != "client":
         explicit_flag = True
 
-    if framework:
-        if "mlx" not in framework.lower():
-            return None
-    elif not explicit_flag:
+    if framework and "mlx" not in framework.lower() and not explicit_flag:
+        return None
+    elif not framework and not explicit_flag:
         return None
 
     model = data.get("model")
@@ -319,19 +403,47 @@ def _extract_mlx_batch_texts(responses: Any) -> List[str]:
         texts = responses
 
     if hasattr(texts, "tolist"):
-        texts = texts.tolist()
+        try:
+            texts = texts.tolist()
+        except Exception:
+            pass
 
     if isinstance(texts, Mapping):
+        # Common mapping shapes
         if "text" in texts:
-            texts = texts["text"]
-        elif "completions" in texts:
-            texts = texts["completions"]
+            return [str(texts["text"])]
+        if "completions" in texts:
+            comps = texts["completions"]
+            if isinstance(comps, Sequence):
+                out = []
+                for c in comps:
+                    if isinstance(c, Mapping):
+                        out.append(
+                            str(
+                                c.get("text")
+                                or c.get("generated_text")
+                                or c.get("completion")
+                                or c
+                            )
+                        )
+                    else:
+                        out.append(str(c))
+                return out
+            return [str(comps)]
+        # Fall back to stringifying mapping
+        return [json.dumps(texts)]
 
     if isinstance(texts, str):
         return [texts]
 
     if isinstance(texts, Sequence):
-        return [str(item) for item in texts]
+        normalized = []
+        for item in texts:
+            try:
+                normalized.append(_extract_mlx_single_text(item))
+            except Exception:
+                normalized.append(str(item))
+        return normalized
 
     return [str(texts)]
 
@@ -342,6 +454,21 @@ def _extract_mlx_single_text(response: Any) -> str:
     if isinstance(response, str):
         return response
 
+    if isinstance(response, Mapping):
+        # Try common keys
+        for key in ("text", "generated_text", "completion"):
+            if key in response:
+                return str(response[key])
+        if "choices" in response and response["choices"]:
+            first = response["choices"][0]
+            if isinstance(first, Mapping):
+                for key in ("text", "generated_text", "completion"):
+                    if key in first:
+                        return str(first[key])
+                return str(first)
+            return str(first)
+        return json.dumps(response)
+
     if hasattr(response, "text"):
         return str(response.text)
 
@@ -351,31 +478,13 @@ def _extract_mlx_single_text(response: Any) -> str:
     if hasattr(response, "completion"):
         return str(response.completion)
 
-    if isinstance(response, Mapping):
-        for key in ("text", "generated_text", "completion"):
-            if key in response:
-                value = response[key]
-                if isinstance(value, Sequence) and not isinstance(value, str):
-                    if value:
-                        return str(value[0])
-                return str(value)
-        if "choices" in response and response["choices"]:
-            choice = response["choices"][0]
-            if isinstance(choice, Mapping):
-                if "text" in choice:
-                    return str(choice["text"])
-                if "message" in choice and isinstance(choice["message"], Mapping):
-                    content = choice["message"].get("content")
-                    if content is not None:
-                        return str(content)
-
     if isinstance(response, Sequence) and not isinstance(response, str):
         first = response[0]
         if isinstance(first, Mapping):
-            if "text" in first:
-                return str(first["text"])
-            if "generated_text" in first:
-                return str(first["generated_text"])
+            for key in ("text", "generated_text", "completion"):
+                if key in first:
+                    return str(first[key])
+            return str(first)
         return str(first)
 
     return str(response)

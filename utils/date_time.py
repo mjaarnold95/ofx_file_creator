@@ -7,7 +7,7 @@ import pandas as pd
 
 # ---------- datetime helpers ----------
 def _coerce_to_timestamp(
-    dt: Union[pd.Timestamp, datetime, str, float, int, None]
+    dt: Union[pd.Timestamp, datetime, str, float, int, None],
 ) -> Optional[pd.Timestamp]:
     """Return a timezone-aware ``Timestamp`` in UTC or ``None``.
 
@@ -25,16 +25,20 @@ def _coerce_to_timestamp(
         return None
 
     if isinstance(dt, pd.Timestamp):
-        ts = dt
+        ts: Optional[pd.Timestamp] = dt
     else:
         try:
-            ts = pd.to_datetime(dt, errors="coerce")
+            ts_res = pd.to_datetime(dt, errors="coerce")
         except (TypeError, ValueError, pd.errors.OutOfBoundsDatetime):
             return None
+        # pd.to_datetime may return NaT; narrow to Optional[pd.Timestamp]
+        ts = ts_res if isinstance(ts_res, pd.Timestamp) else None
 
     if ts is pd.NaT or pd.isna(ts):
         return None
 
+    # At this point ts is a Timestamp; annotate and normalize to UTC.
+    assert isinstance(ts, pd.Timestamp)
     if ts.tzinfo is None:
         ts = ts.tz_localize(timezone.utc)
     else:
@@ -58,36 +62,38 @@ def ofx_datetime(dt: Optional[pd.Timestamp]) -> Optional[str]:
     py_dt = ts.to_pydatetime()
     return f"{py_dt.strftime('%Y%m%d%H%M%S')}.000[0:UTC]"
 
+
 def parse_date(val) -> pd.Timestamp:
     # robust parse -> UTC
     return pd.to_datetime(val, errors="coerce", utc=True)
+
 
 def parse_time_to_timedelta(val) -> Optional[pd.Timedelta]:
     """Return a pure time-of-day as Timedelta (hh:mm:ss). None if not parseable."""
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return None
-    
+
     # Excel time fraction (0..1)
     if isinstance(val, (int, float)) and 0 <= float(val) < 1:
         total = int(round(float(val) * 86400))
         return pd.to_timedelta(total, unit="s")
-    
+
     s = str(val).strip()
     if not s:
         return None
-    
+
     fmts = ["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p", "%I%p", "%H%M%S", "%H%M"]
     for fmt in fmts:
         try:
             dt = datetime.strptime(s, fmt)
             return (
-                    pd.to_timedelta(dt.hour, unit="h")
-                    + pd.to_timedelta(dt.minute, unit="m")
-                    + pd.to_timedelta(dt.second, unit="s")
+                pd.to_timedelta(dt.hour, unit="h")
+                + pd.to_timedelta(dt.minute, unit="m")
+                + pd.to_timedelta(dt.second, unit="s")
             )
         except ValueError:
             continue
-    
+
     try:
         ts = pd.to_datetime(s, errors="coerce")
         if pd.notna(ts):

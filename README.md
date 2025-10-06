@@ -1,6 +1,6 @@
 # OFX File Creator
 
-![CI](https://github.com/mjaarnold95/ofx_file_creator/actions/workflows/ci.yml/badge.svg)
+![CI (matrix)](https://github.com/mjaarnold95/ofx_file_creator/actions/workflows/ci.yml/badge.svg)
 
 Turn bank exports (CSV/Excel) into OFX files for import into personal finance tools.
 The `utils/` package normalizes columns, cleans text, infers transaction types, and
@@ -122,6 +122,30 @@ For backwards compatibility `utils.cleaning` re-exports `infer_trntype` and
 python3 -m pytest -q
 ```
 
+## Developer: type checking & tests
+
+We run mypy using a Python 3.11 virtual environment so that `pandas-stubs` and
+related type packages are compatible. Quick setup:
+
+```bash
+# create a local venv (uses Python 3.11)
+python3.11 -m venv .venv
+source .venv/bin/activate
+
+# bootstrap pip and install dev deps
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install mypy pandas pandas-stubs numpy
+
+# run the type checker and tests
+python -m mypy --config-file mypy.ini utils
+python -m pytest -q
+```
+
+Notes:
+- If your system doesn't have Python 3.11, install it (pyenv or system package)
+   or run mypy in an environment that provides compatible stubs for pandas/numpy.
+- CI should run mypy under Python 3.11 to match local checks.
+
 Tests cover time parsing (incl. Excel fractions), amount cleaning, rule overrides,
 LLM batching/parsing, FITID generation, and OFX field precedence.
 
@@ -131,3 +155,23 @@ LLM batching/parsing, FITID generation, and OFX field precedence.
 - If both debit/credit columns exist, net amount = credit - debit.
 - `derive_acctid_from_path` extracts digits from filenames; otherwise uses a stub + hash.
 - `NAME` is escaped and trimmed to 32 chars for OFX.
+
+See `docs/CONTRIBUTING.md` for quick developer setup and the Makefile targets.
+
+### Using the included Makefile
+
+For convenience there's a small Makefile with common developer targets:
+
+```bash
+# create and bootstrap the Python 3.11 virtualenv and install dev deps
+make venv
+
+# run mypy (uses .venv)
+make typecheck
+
+# run tests (uses .venv)
+make test
+
+# clean up
+make clean
+```

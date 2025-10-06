@@ -73,17 +73,17 @@ def infer_trntype_series(
     haystack = haystack.str.strip()
 
     pending = result.isna()
-    for pattern, output in rules.rules_regex:
+    for regex_pattern, output in rules.rules_regex:
         if not pending.any():
             break
-        mask = pending & haystack.str.contains(pattern, regex=True, na=False)
+        mask = pending & haystack.str.contains(regex_pattern, regex=True, na=False)
         result.loc[mask] = output
         pending = result.isna()
 
-    for pattern, output in rules.keyword_rules:
+    for keyword_pattern, output in rules.keyword_rules:
         if not pending.any():
             break
-        mask = pending & haystack.str.contains(pattern, regex=True, na=False)
+        mask = pending & haystack.str.contains(keyword_pattern, regex=True, na=False)
         result.loc[mask] = output
         pending = result.isna()
 
